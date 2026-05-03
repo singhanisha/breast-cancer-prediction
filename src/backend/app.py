@@ -1,29 +1,50 @@
-from flask import Flask, request, jsonify
-import numpy as np   # ✅ ADD THIS
+from flask import Flask, request, jsonify, send_file
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from flask_cors import CORS
+import numpy as np
 import joblib
 import sqlite3
-from flask_cors import CORS
+import uuid
+import os
 
 app = Flask(__name__)
 CORS(app)
 
+# =========================
+# LOAD MODEL
+# =========================
+model = joblib.load("../../model.pkl")
+scaler = joblib.load("../../scaler.pkl")
 
-model = joblib.load("model.pkl")
-scaler = joblib.load("scaler.pkl")
-# -------------------------
-# CREATE DATABASE
-# -------------------------
+# =========================
+# DB INIT
+# =========================
 def init_db():
-    conn = sqlite3.connect("patients.db")
+    conn = sqlite3.connect("patient.db")
     cursor = conn.cursor()
 
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS patients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT UNIQUE,
+        patientName TEXT,
+        age TEXT,
+        email TEXT,
         mobile TEXT,
-        password TEXT
+        address TEXT,
+        date TEXT,
+        doctorName TEXT,
+        doctorRole TEXT,
+        radius REAL,
+        texture REAL,
+        perimeter REAL,
+        area REAL,
+        smoothness REAL,
+        concavity REAL,
+        result TEXT,
+        pdfPath TEXT
     )
     """)
 
@@ -32,96 +53,184 @@ def init_db():
 
 init_db()
 
-# -------------------------
-# REGISTER
-# -------------------------
-@app.route("/register", methods=["POST"])
-def register():
-    data = request.json
+# =========================
+# PDF GENERATOR
+# =========================
+def generate_pdf(data, result):
+    os.makedirs("reports", exist_ok=True)
 
-    name = data["name"]
-    email = data["email"]
-    mobile = data["mobile"]
-    password = data["password"]
+    file_path = f"reports/{str(uuid.uuid4())[:8]}.pdf"
 
-    conn = sqlite3.connect("patients.db")
-    cursor = conn.cursor()
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+    styles = getSampleStyleSheet()
+    content = []
 
-    try:
-        cursor.execute("""
-        INSERT INTO users (name, email, mobile, password)
-        VALUES (?, ?, ?, ?)
-        """, (name, email, mobile, password))
+    # Title
+    content.append(Paragraph("<b>BREAST CANCER REPORT</b>", styles["Title"]))
+    content.append(Spacer(1, 15))
 
-        conn.commit()
-        return jsonify({"message": "Registered Successfully"})
+    # Patient Info
+    patient_data = [
+        ["Patient Name", data["patientName"]],
+        ["Age", data["age"]],
+        ["Email", data["email"]],
+        ["Mobile", data["mobile"]],
+        ["Date", data["date"]],
+    ]
 
-    except:
-        return jsonify({"message": "Email already registered, please login"})
+    table = Table(patient_data, colWidths=[150, 300])
+    table.setStyle(TableStyle([
+        ("GRID", (0,0), (-1,-1), 1, colors.grey),
+        ("BACKGROUND", (0,0), (0,-1), colors.lightgrey),
+    ]))
 
-    finally:
-        conn.close()
+    content.append(table)
+    content.append(Spacer(1, 20))
 
-# -------------------------
-# LOGIN
-# -------------------------
-@app.route("/login", methods=["POST"])
-def login():
-    data = request.json
+    # Result
+    content.append(Paragraph(f"<b>Result:</b> {result}", styles["Heading2"]))
+    content.append(Spacer(1, 10))
 
-    email = data["email"]
-    password = data["password"]
-
-    conn = sqlite3.connect("patients.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT id, name, mobile FROM users 
-    WHERE email=? AND password=?
-    """, (email, password))
-
-    user = cursor.fetchone()
-    conn.close()
-
-    if user:
-        return jsonify({
-            "status": "success",
-            "user": {
-                "id": user[0],
-                "name": user[1],
-                "mobile": user[2]
-            }
-        })
+    if result == "Malignant":
+        content.append(Paragraph("⚠ Immediate doctor consultation required.", styles["Normal"]))
     else:
-        return jsonify({"status": "fail", "message": "Invalid credentials"})
-    
+        content.append(Paragraph("✔ Condition appears normal. Regular checkups advised.", styles["Normal"]))
 
+    doc.build(content)
+    return file_path
+
+# =========================
+# PREDICT
+# =========================
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
         data = request.json
-        print("Received:", data)
 
-        import numpy as np   # ✅ ensure inside also
+        values = data["features"]
 
-        features = np.array(data, dtype=float).reshape(1, -1)
-        print("Shape:", features.shape)
-
+        features = np.array(values).reshape(1, -1)
         features_scaled = scaler.transform(features)
-        prediction = model.predict(features_scaled)[0]
 
+        prediction = model.predict(features_scaled)[0]
         result = "Malignant" if prediction == 1 else "Benign"
 
-        return jsonify({"prediction": result})
+        pdf_path = generate_pdf(data, result)
+
+        conn = sqlite3.connect("patient.db")
+        cursor = conn.cursor()
+
+        cursor.execute("""
+        INSERT INTO patients (
+            patientName, age, email, mobile, address, date,
+            doctorName, doctorRole,
+            radius, texture, perimeter, area, smoothness, concavity,
+            result, pdfPath
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            data["patientName"],
+            data["age"],
+            data["email"],
+            data["mobile"],
+            data["address"],
+            data["date"],
+            data["doctorName"],
+            data["doctorRole"],
+            values[0], values[1], values[2],
+            values[3], values[4], values[5],
+            result,
+            pdf_path
+        ))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "status": "success",
+            "prediction": result,
+            "pdf_path": pdf_path
+        })
 
     except Exception as e:
-        print("FULL ERROR:", str(e))   # 🔥 IMPORTANT
-        return jsonify({"error": str(e)})
+        return jsonify({
+            "status": "fail",
+            "error": str(e)
+        })
 
+# =========================
+# HISTORY
+# =========================
+@app.route("/history", methods=["GET"])
+def history():
+    conn = sqlite3.connect("patient.db")
+    cursor = conn.cursor()
 
+    cursor.execute("SELECT * FROM patients ORDER BY id DESC")
+    rows = cursor.fetchall()
 
-# -------------------------
+    conn.close()
+
+    return jsonify({
+        "status": "success",
+        "data": rows
+    })
+
+# =========================
+# VIEW REPORT (INLINE)
+# =========================
+@app.route("/view-report/<filename>")
+def view_report(filename):
+    path = os.path.join("reports", filename)
+
+    if os.path.exists(path):
+        return send_file(path)  # view in browser
+
+    return jsonify({"status": "fail", "message": "Not found"})
+
+# =========================
+# DOWNLOAD REPORT
+# =========================
+@app.route("/download-report/<filename>")
+def download_report(filename):
+    path = os.path.join("reports", filename)
+
+    if os.path.exists(path):
+        return send_file(path, as_attachment=True)
+
+    return jsonify({"status": "fail", "message": "Not found"})
+
+# =========================
+# GET REPORTS LIST
+# =========================
+@app.route("/reports", methods=["GET"])
+def get_reports():
+    conn = sqlite3.connect("patient.db")
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT id, patientName, date, result, pdfPath
+    FROM patients
+    ORDER BY id DESC
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    data = []
+    for r in rows:
+        data.append({
+            "id": r[0],
+            "name": r[1],
+            "date": r[2],
+            "result": r[3],
+            "pdf": r[4]
+        })
+
+    return jsonify({"data": data})
+
+# =========================
 # RUN
-# -------------------------
+# =========================
 if __name__ == "__main__":
     app.run(debug=True)

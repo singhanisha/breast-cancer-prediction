@@ -1,171 +1,271 @@
 import { useState } from "react";
+import bgImage from "../assets/bgimage.jpg";
 
 export default function Dashboard() {
   const user = JSON.parse(localStorage.getItem("user"));
 
   const [formData, setFormData] = useState({
+    patientName: "",
+    age: "",
+    email: "",
+    mobile: "",
+    address: "",
+    date: "",
     radius: "",
     texture: "",
     perimeter: "",
     area: "",
     smoothness: "",
-    concavity: ""
+    concavity: "",
   });
 
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
-  const [csvResults, setCsvResults] = useState([]);
+  const [pdfPath, setPdfPath] = useState("");
 
-  // -----------------------
-  // Handle Input
-  // -----------------------
+  // Input Change
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value,
+    });
   };
 
-  // -----------------------
-  // Predict (Single)
-  // -----------------------
+  // Prediction API
   const handlePredict = async () => {
-  try {
-    // ❗ Check empty fields FIRST
-    const values = Object.values(formData);
-
-    if (values.some((val) => val === "")) {
-      setResult("⚠ Please fill all fields");
-      return;
-    }
-
-    // Convert to numbers
-    const data = values.map((val) => Number(val));
-
-    // ❗ Check invalid numbers
-    if (data.some((val) => isNaN(val))) {
-      setResult("⚠ Invalid input values");
-      return;
-    }
-
-    console.log("Sending:", data);
-
-    const response = await fetch("http://127.0.0.1:5000/predict", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(data)
-    });
-
-    const result = await response.json();
-
-    if (result.prediction) {
-      setResult(result.prediction);
-    } else {
-      setResult("Error: " + result.error);
-    }
-
-  } catch (error) {
-    console.error(error);
-    setResult("Server connection error");
-  }
-};
-
-  // -----------------------
-  // CSV Upload
-  // -----------------------
-  const handleCSV = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const text = await file.text();
-    const rows = text.split("\n").slice(1);
-
-    const data = rows.map(row =>
-      row.split(",").map(Number)
-    );
+    setLoading(true);
 
     try {
-      setLoading(true);
-
       const res = await fetch("http://127.0.0.1:5000/predict", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify(data)
+
+        body: JSON.stringify({
+          patientName: formData.patientName,
+          age: formData.age,
+          email: formData.email,
+          mobile: formData.mobile,
+          address: formData.address,
+          date: formData.date,
+
+          doctorName: user?.name,
+          doctorRole: user?.role,
+
+          features: [
+            Number(formData.radius),
+            Number(formData.texture),
+            Number(formData.perimeter),
+            Number(formData.area),
+            Number(formData.smoothness),
+            Number(formData.concavity),
+          ],
+        }),
       });
 
-      const result = await res.json();
-      setCsvResults(result.predictions);
+      const data = await res.json();
 
-    } catch {
-      alert("CSV error");
-    } finally {
-      setLoading(false);
+      if (data.status === "success") {
+        setResult(data.prediction);
+        setPdfPath(data.pdf_path || "");
+        alert("Prediction Completed Successfully");
+      } else {
+        setResult(data.error || "Prediction Failed");
+      }
+    } catch (error) {
+      console.log(error);
+      setResult("Server Error");
     }
+
+    setLoading(false);
+  };
+
+  // Generate Report
+  const handleGenerateReport = () => {
+    if (!pdfPath) {
+      alert("Please predict first");
+      return;
+    }
+
+    const fileName = pdfPath.split("/").pop();
+
+    window.open(
+      `http://127.0.0.1:5000/download-report/${fileName}`,
+      "_blank"
+    );
+  };
+
+  // Navigation
+  const handleViewHistory = () => {
+    window.location.href = "/history";
+  };
+
+  const handleViewReports = () => {
+    window.location.href = "/reports";
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-r from-blue-100 to-green-100 p-6">
+    <div
+      className="min-h-screen bg-cover bg-center bg-no-repeat p-6"
+      style={{
+        backgroundImage: `
+          linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)),
+          url(${bgImage})
+        `,
+      }}
+    >
+      <div className="max-w-6xl mx-auto text-white">
 
-      {/* 🔷 Patient Info Card */}
-      <div className="bg-white shadow-xl rounded-2xl p-6 max-w-md mx-auto text-center mb-6">
-        <h2 className="text-2xl font-bold mb-2">Patient Dashboard</h2>
-        <p className="text-gray-600">ID: {user?.id}</p>
-        <p className="text-gray-600">Name: {user?.name}</p>
-        <p className="text-gray-600">Mobile: {user?.mobile}</p>
-      </div>
+        {/* 🔥 HEADER */}
+        <div className="bg-[#0f172a]/90 rounded-3xl p-6 mb-6 border border-white/10 shadow-lg flex justify-between items-center">
 
-      {/* 🔷 Prediction Form */}
-      <div className="bg-white shadow-xl rounded-2xl p-6 max-w-md mx-auto">
+          {/* LEFT */}
+          <div>
+            <h1 className="text-3xl font-bold mb-2">
+              Medical Dashboard
+            </h1>
 
-        <h3 className="text-lg font-semibold mb-4">
-          Enter Tumor Details
-        </h3>
+            <p className="text-lg text-gray-300">
+              Logged in as:
+              <span className="ml-2 font-semibold text-white">
+                {user?.name || "Doctor"}
+              </span>
+            </p>
 
-        {[
-          { label: "Tumor Radius", name: "radius" },
-          { label: "Texture", name: "texture" },
-          { label: "Perimeter", name: "perimeter" },
-          { label: "Area", name: "area" },
-          { label: "Smoothness", name: "smoothness" },
-          { label: "Concavity", name: "concavity" }
-        ].map((field) => (
-          <div key={field.name} className="mb-3">
-            <label className="text-sm font-medium">
-              {field.label}
-            </label>
+            <p className="text-gray-400">
+              Role: {user?.role || "Medical Staff"}
+            </p>
+          </div>
+
+          {/* RIGHT BUTTONS */}
+          <div className="flex gap-3">
+
+            <button
+              onClick={handleViewReports}
+              className="px-5 py-2 rounded-xl 
+                         bg-gradient-to-r from-indigo-500 to-purple-500
+                         text-white font-semibold 
+                         hover:scale-105 transition shadow-lg"
+            >
+              View Reports
+            </button>
+
+            <button
+              onClick={handleViewHistory}
+              className="px-5 py-2 rounded-xl 
+                         bg-[#1e293b] 
+                         border border-purple-400
+                         text-white font-semibold 
+                         hover:bg-purple-500/20 
+                         transition"
+            >
+              History
+            </button>
+
+          </div>
+        </div>
+
+        {/* 🧾 PATIENT DETAILS */}
+        <div className="bg-[#111827]/90 rounded-3xl p-6 mb-6 border border-white/10 shadow-lg">
+          <h2 className="text-2xl font-semibold mb-5">
+            Patient Details
+          </h2>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <input name="patientName" placeholder="Patient Name" onChange={handleChange} className="inputStyle" />
+            <input name="age" placeholder="Age" onChange={handleChange} className="inputStyle" />
+            <input name="email" placeholder="Patient Email" onChange={handleChange} className="inputStyle" />
+
             <input
-              type="number"
-              step="any"
-              name={field.name}
-              onChange={handleChange}
-              className="w-full mt-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
-              placeholder="Enter value..."
+              name="mobile"
+              placeholder="Mobile"
+              value={formData.mobile}
+              onChange={(e) => {
+                const value = e.target.value.replace(/\D/g, "");
+                if (value.length <= 10) {
+                  setFormData({ ...formData, mobile: value });
+                }
+              }}
+              className="inputStyle"
             />
-          </div>
-        ))}
 
-        {/* Button */}
-       <button
-  onClick={handlePredict}
-  disabled={Object.values(formData).some(val => val === "")}
-  className="w-full bg-blue-600 text-white py-2 rounded-lg mt-3 disabled:bg-gray-400"
->
-  Predict
-</button>
-
-        {/* 🔷 Result */}
-        {result && (
-          <div className={`mt-4 p-4 rounded-xl text-center font-semibold transition-all
-            ${result.includes("Malignant") ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"}`}>
-            {result}
+            <input name="address" placeholder="Address" onChange={handleChange} className="inputStyle" />
+            <input type="date" name="date" onChange={handleChange} className="inputStyle" />
           </div>
-        )}
+        </div>
+
+        {/* 🔬 TUMOR DETAILS */}
+        <div className="bg-[#111827]/90 rounded-3xl p-6 border border-white/10 shadow-lg">
+          <h2 className="text-2xl font-semibold mb-5">
+            Tumor Clinical Details
+          </h2>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            {["radius","texture","perimeter","area","smoothness","concavity"].map((f) => (
+              <input
+                key={f}
+                name={f}
+                placeholder={f}
+                type="number"
+                step="any"
+                onChange={handleChange}
+                className="inputStyle"
+              />
+            ))}
+          </div>
+
+          {/* BUTTONS */}
+          <div className="grid md:grid-cols-2 gap-4 mt-6">
+
+            <button
+              onClick={handlePredict}
+              className="py-3 rounded-xl 
+                         bg-gradient-to-r from-purple-500 to-indigo-500 
+                         text-white font-semibold hover:scale-105 transition"
+            >
+              {loading ? "Predicting..." : "Predict"}
+            </button>
+
+            <button
+              onClick={handleGenerateReport}
+              className="py-3 rounded-xl 
+                         bg-green-600 
+                         text-white font-semibold hover:scale-105 transition"
+            >
+              Generate Report
+            </button>
+
+          </div>
+
+          {/* RESULT */}
+          {result && (
+            <div className="mt-6 p-5 rounded-2xl border border-purple-400 bg-purple-500/10 text-center">
+              <h2 className="text-xl font-bold">
+                Prediction Result: {result}
+              </h2>
+            </div>
+          )}
+        </div>
       </div>
 
-   
-     
+      {/* INPUT STYLE */}
+      <style>{`
+        .inputStyle {
+          width: 100%;
+          padding: 12px 16px;
+          border-radius: 12px;
+          background: #020617;
+          color: white;
+          border: 1px solid #374151;
+          outline: none;
+        }
 
+        .inputStyle:focus {
+          border-color: #a855f7;
+          box-shadow: 0 0 0 2px rgba(168,85,247,0.3);
+        }
+      `}</style>
     </div>
   );
 }
