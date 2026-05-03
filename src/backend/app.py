@@ -53,9 +53,84 @@ def init_db():
 
 init_db()
 
+# ------------------------- # REGISTER 
+# -------------------------
+@app.route("/register", methods=["POST"]) 
+def register(): 
+    data = request.json 
+    role = data.get("role") 
+    staffId = data.get("staffId") # patient ke liye optional 
+    name = data.get("name") 
+    email = data.get("email") 
+    mobile = data.get("mobile") 
+    password = data.get("password") 
+    
+    # Validation 
+    if not role or not name or not email or not mobile or not password: 
+        return jsonify({ "message": "All fields are required" }) 
+    conn = sqlite3.connect("patient.db") 
+    cursor = conn.cursor() 
+    try:
+         cursor.execute(""" INSERT INTO users (role, staffId, name, email, mobile, password)
+                         VALUES (?, ?, ?, ?, ?, ?) """, 
+                         ( role, staffId, name, email, mobile, password )) 
+         conn.commit() 
+         return jsonify({ "message": "Registered Successfully" }) 
+    except: 
+        return jsonify({ "message": "Email or ID already exists, please login" })
+        
+    finally: 
+        conn.close() 
+
+# ------------------------- 
+# LOGIN (EMAIL OR ID BASED) 
+# ------------------------- 
+@app.route("/login", methods=["POST"]) 
+def login(): 
+    data = request.json 
+    loginId = data.get("loginId") # Email ya Staff ID 
+    password = data.get("password") 
+    if not loginId or not password: 
+        return jsonify({ "status": "fail",
+                         "message": "Please enter Email/ID and Password" })
+        
+    conn = sqlite3.connect("patient.db")
+    cursor = conn.cursor() 
+    cursor.execute(""" SELECT id, role, name, mobile FROM users WHERE (staffId = ? OR email = ?) AND password = ? """, (loginId, loginId, password)) 
+    user = cursor.fetchone() 
+    conn.close() 
+    if user: 
+        return jsonify({ "status": "success", "user": { "id": user[0], "role": user[1], "name": user[2], "mobile": user[3] } }) 
+    return jsonify({ "status": "fail",
+                     "message": "Invalid Email/ID or Password" })
+
+
 # =========================
-# PDF GENERATOR
+# FORGOT PASSWORD
 # =========================
+@app.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data = request.json
+
+    conn = sqlite3.connect("patient.db")
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM users WHERE email=?", (data["email"],))
+    user = cursor.fetchone()
+
+    if not user:
+        return jsonify({"status": "fail", "message": "User not found"})
+
+    cursor.execute(
+        "UPDATE users SET password=? WHERE email=?",
+        (data["newPassword"], data["email"])
+    )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "success", "message": "Password updated"})
+
 def generate_pdf(data, result):
     os.makedirs("reports", exist_ok=True)
 
@@ -65,36 +140,105 @@ def generate_pdf(data, result):
     styles = getSampleStyleSheet()
     content = []
 
-    # Title
-    content.append(Paragraph("<b>BREAST CANCER REPORT</b>", styles["Title"]))
-    content.append(Spacer(1, 15))
+    # ===== TITLE =====
+    content.append(Paragraph("<b>BREAST CANCER DETECTION REPORT</b>", styles["Title"]))
+    content.append(Spacer(1, 20))
 
-    # Patient Info
+    # ===== PATIENT INFO =====
+    content.append(Paragraph("<b>Patient Information</b>", styles["Heading2"]))
+    content.append(Spacer(1, 10))
+
     patient_data = [
         ["Patient Name", data["patientName"]],
         ["Age", data["age"]],
         ["Email", data["email"]],
         ["Mobile", data["mobile"]],
+        ["Address", data["address"]],
         ["Date", data["date"]],
     ]
 
     table = Table(patient_data, colWidths=[150, 300])
     table.setStyle(TableStyle([
-        ("GRID", (0,0), (-1,-1), 1, colors.grey),
+        ("GRID", (0,0), (-1,-1), 1, colors.black),
         ("BACKGROUND", (0,0), (0,-1), colors.lightgrey),
     ]))
 
     content.append(table)
     content.append(Spacer(1, 20))
 
-    # Result
-    content.append(Paragraph(f"<b>Result:</b> {result}", styles["Heading2"]))
+    # ===== DOCTOR INFO =====
+    content.append(Paragraph("<b>Medical Staff Information</b>", styles["Heading2"]))
+    content.append(Spacer(1, 10))
+
+    doctor_data = [
+        ["Doctor Name", data["doctorName"]],
+        ["Doctor Role", data["doctorRole"]],
+    ]
+
+    table = Table(doctor_data, colWidths=[150, 300])
+    table.setStyle(TableStyle([
+        ("GRID", (0,0), (-1,-1), 1, colors.black),
+        ("BACKGROUND", (0,0), (0,-1), colors.lightgrey),
+    ]))
+
+    content.append(table)
+    content.append(Spacer(1, 20))
+
+    # ===== FEATURES =====
+    content.append(Paragraph("<b>Tumor Clinical Features</b>", styles["Heading2"]))
+    content.append(Spacer(1, 10))
+
+    features = data["features"]
+
+    feature_data = [
+        ["Radius", features[0]],
+        ["Texture", features[1]],
+        ["Perimeter", features[2]],
+        ["Area", features[3]],
+        ["Smoothness", features[4]],
+        ["Concavity", features[5]],
+    ]
+
+    table = Table(feature_data, colWidths=[150, 300])
+    table.setStyle(TableStyle([
+        ("GRID", (0,0), (-1,-1), 1, colors.black),
+        ("BACKGROUND", (0,0), (0,-1), colors.lightgrey),
+    ]))
+
+    content.append(table)
+    content.append(Spacer(1, 20))
+
+    # ===== RESULT =====
+    content.append(Paragraph("<b>Final Diagnosis</b>", styles["Heading2"]))
+    content.append(Spacer(1, 10))
+
+    content.append(Paragraph(f"<b>Prediction Result:</b> {result}", styles["Normal"]))
+    content.append(Spacer(1, 15))
+
+    # ===== RECOMMENDATION =====
+    content.append(Paragraph("<b>Medical Recommendation</b>", styles["Heading2"]))
     content.append(Spacer(1, 10))
 
     if result == "Malignant":
-        content.append(Paragraph("⚠ Immediate doctor consultation required.", styles["Normal"]))
+        content.append(Paragraph(
+            "Immediate consultation with an oncologist is strongly recommended. "
+            "Further clinical examination, biopsy, and specialist treatment should be considered as early as possible.",
+            styles["Normal"]
+        ))
     else:
-        content.append(Paragraph("✔ Condition appears normal. Regular checkups advised.", styles["Normal"]))
+        content.append(Paragraph(
+            "No immediate concern detected. Regular monitoring and routine checkups are advised.",
+            styles["Normal"]
+        ))
+
+    content.append(Spacer(1, 20))
+
+    # ===== FOOTER =====
+    content.append(Paragraph(
+        "<i>This report is system-generated and intended for medical support only. "
+        "Please consult a qualified healthcare professional for final diagnosis.</i>",
+        styles["Italic"]
+    ))
 
     doc.build(content)
     return file_path
