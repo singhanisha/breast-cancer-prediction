@@ -26,6 +26,19 @@ def init_db():
     conn = sqlite3.connect("patient.db")
     cursor = conn.cursor()
 
+    # USERS TABLE (IMPORTANT ADD)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT,
+        staffId TEXT UNIQUE,
+        name TEXT,
+        email TEXT UNIQUE,
+        mobile TEXT,
+        password TEXT
+    )
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS patients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
